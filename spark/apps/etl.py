@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import to_date, col
 
-from spark_jobs.common import (
+from spark.apps.common import (
     parse_netflix_file,
     split_dataframe_by_date,
     combine_dataframes,
