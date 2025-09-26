@@ -1,0 +1,32 @@
+syntax = "proto3";
+package recs;
+
+service Recommender {
+  // Simple top-K by user_id
+  rpc RecommendForUser(RecommendForUserRequest) returns (RecommendResponse);
+  // Fold-in a new user from recent (item_id, rating) and then recommend
+  rpc FoldInAndRecommend(FoldInRequest) returns (RecommendResponse);
+  // Health
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message RecommendForUserRequest {
+  int64 user_id = 1;
+  int32 k = 2;              // default on server if 0
+  repeated int64 exclude_item_ids = 3;  // optional: items to exclude
+}
+
+message FoldInRequest {
+  int32 k = 1;
+  repeated int64 item_ids = 2;    // items this (new) user interacted with
+  repeated float ratings = 3;     // same length as item_ids
+  repeated int64 exclude_item_ids = 4;
+}
+
+message RecommendResponse {
+  repeated int64 item_ids = 1;
+  repeated float scores = 2;     // dot-product or ANN scores
+}
+
+message HealthRequest {}
+message HealthResponse { string status = 1; }
