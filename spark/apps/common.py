@@ -127,8 +127,7 @@ def train_als(
     implicit_prefs=False,
     cold_start_strategy="drop",
     nonnegative=False,
-    user_factors_path="models/user_factors/",
-    item_factors_path="models/item_factors/"
+    model_save_path="models/artifacts/",
 ) -> None:
     """
     Train ALS model, extract user/item factors, and save as Parquet files.
@@ -155,14 +154,14 @@ def train_als(
     item_f = model.itemFactors.withColumnRenamed("id", item_col)
     
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    user_f_path = user_factors_path.rstrip("/") + f"/version_{timestamp}"
-    item_f_path = item_factors_path.rstrip("/") + f"/version_{timestamp}"
+    user_f_path = model_save_path.rstrip("/") + f"/version_{timestamp}/user_factors"
+    item_f_path = model_save_path.rstrip("/") + f"/version_{timestamp}/item_factors"
 
     user_f.write.mode("overwrite").parquet(user_f_path)
     item_f.write.mode("overwrite").parquet(item_f_path)
 
 
-def write_dataframes_as_delta(
+def write_dataframes_as_parquet(
     df: DataFrame,
     output_path: str,
     *,
@@ -174,14 +173,14 @@ def write_dataframes_as_delta(
     extra_write_options: Optional[dict] = None,
 ) -> None:
     """
-    Write the ratings dataframe to Delta format, partitioned by year/month.
+    Write the ratings dataframe to Parquet format, partitioned by year/month.
 
     Parameters
     ----------
     df : DataFrame
         Input DataFrame with columns: MOVIE_ID, CUST_ID, RATING, DATE (DateType).
     output_path : str
-        Filesystem path (e.g., "s3://…", "abfss://…", or "/data/…") to store the Delta table.
+        Filesystem path (e.g., "s3://…", "abfss://…", or "/data/…") to store the Parquet dataset.
     mode : str, default "overwrite"
         Write mode: "overwrite" or "append".
     partition_cols : Iterable[str], default ("year", "month")
@@ -219,7 +218,7 @@ def write_dataframes_as_delta(
             df_out = df_out.repartition(int(target_repartition), *[col(c) for c in partition_cols])
 
         writer = (df_out.write
-                  .format("delta")
+                  .format("parquet")
                   .mode(mode)
                   .partitionBy(*partition_cols))
 
@@ -238,7 +237,7 @@ def write_dataframes_as_delta(
             # CREATE/REPLACE managed metadata pointing to the path
             spark.sql(f"""
                 CREATE TABLE IF NOT EXISTS {table_name}
-                USING DELTA
+                USING PARQUET
                 LOCATION '{output_path}'
             """)
             if mode == "overwrite":

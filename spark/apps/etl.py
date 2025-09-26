@@ -12,19 +12,17 @@ from spark.apps.common import (
     parse_netflix_file,
     split_dataframe_by_date,
     combine_dataframes,
-    write_dataframes_as_delta,
+    write_dataframes_as_parquet,
     train_als,
 )
 
 
-# ---------- Spark builder (Delta enabled) ----------
+# ---------- Spark builder ----------
 def build_spark(app_name: str,
                 shuffle_partitions: Optional[int] = None) -> SparkSession:
     builder = (
         SparkSession.builder
         .appName(app_name)
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
     )
     if shuffle_partitions is not None:
         builder = builder.config("spark.sql.shuffle.partitions", int(shuffle_partitions))
@@ -46,7 +44,7 @@ def _read_and_split_files(
     train_parts, test_parts = [], []
     for path in input_files:
         df = parse_netflix_file(spark, path)
-        # Ensure DATE is DateType for downstream delta writer
+        # Ensure DATE is DateType for downstream Parquet writer
         df = df.withColumn("DATE", to_date(col("DATE")))  # expects yyyy-MM-dd by default
         tdf, vdf = split_dataframe_by_date(df, "DATE", max_train_date)
         train_parts.append(tdf)
@@ -58,41 +56,45 @@ def _combine_and_write(
     train_parts: List[DataFrame],
     test_parts: List[DataFrame],
     *,
-    delta_train_path: str,
-    delta_test_path: str,
-    delta_table_train: Optional[str],
-    delta_table_test: Optional[str],
+    parquet_train_path: str,
+    parquet_test_path: str,
+    parquet_table_train: Optional[str],
+    parquet_table_test: Optional[str],
     shuffle_partitions: Optional[int],
     target_repartition: Optional[int],
     extra_write_options: Optional[dict],
 ) -> Tuple[DataFrame, DataFrame]:
     """
-    Combine (dedup by MOVIE_ID, CUST_ID, DATE taking max RATING) and write each split as Delta.
+    Combine (dedup by MOVIE_ID, CUST_ID, DATE taking max RATING) and write each split as Parquet.
     """
     subset_cols = ["MOVIE_ID", "CUST_ID", "DATE"]
     train_df = combine_dataframes(train_parts, subset_cols=subset_cols, target_col="RATING")
     test_df = combine_dataframes(test_parts, subset_cols=subset_cols, target_col="RATING")
 
-    # Write to Delta; partitioned year/month is handled inside
-    write_dataframes_as_delta(
+    # Drop rows with nulls in any column
+    train_df = train_df.dropna()
+    test_df = test_df.dropna()
+
+    # Write to Parquet; partitioned year/month is handled inside
+    write_dataframes_as_parquet(
         df=train_df,
-        output_path=delta_train_path,
+        output_path=parquet_train_path,
         mode="overwrite",
         partition_cols=("year", "month"),
         num_shuffle_partitions=shuffle_partitions,
         target_repartition=target_repartition,
-        table_name=delta_table_train,
+        table_name=parquet_table_train,
         extra_write_options=extra_write_options,
     )
 
-    write_dataframes_as_delta(
+    write_dataframes_as_parquet(
         df=test_df,
-        output_path=delta_test_path,
+        output_path=parquet_test_path,
         mode="overwrite",
         partition_cols=("year", "month"),
         num_shuffle_partitions=shuffle_partitions,
         target_repartition=target_repartition,
-        table_name=delta_table_test,
+        table_name=parquet_table_test,
         extra_write_options=extra_write_options,
     )
 
@@ -101,7 +103,7 @@ def _combine_and_write(
 
 def main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Netflix ETL: parse → split → combine → delta write → train ALS"
+        description="Netflix ETL: parse → split → combine → Parquet write → train ALS"
     )
     # Inputs
     parser.add_argument(
@@ -116,11 +118,11 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="Inclusive max date for train split; rows after this go to test. Format yyyy-MM-dd.",
     )
 
-    # Delta outputs
-    parser.add_argument("--delta-train-path", required=True, help="Delta output path for TRAIN.")
-    parser.add_argument("--delta-test-path", required=True, help="Delta output path for TEST.")
-    parser.add_argument("--delta-table-train", default=None, help="Optional metastore table name for TRAIN.")
-    parser.add_argument("--delta-table-test", default=None, help="Optional metastore table name for TEST.")
+    # Output paths
+    parser.add_argument("--parquet-train-path", required=True, help="Output path for TRAIN Parquet dataset.")
+    parser.add_argument("--parquet-test-path", required=True, help="Output path for TEST Parquet dataset.")
+    parser.add_argument("--parquet-table-train", default=None, help="Optional metastore table name for TRAIN Parquet dataset.")
+    parser.add_argument("--parquet-table-test", default=None, help="Optional metastore table name for TEST Parquet dataset.")
 
     # Spark tuning
     parser.add_argument("--shuffle-partitions", type=int, default=400, help="spark.sql.shuffle.partitions to use.")
@@ -131,12 +133,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument(
         "--extra-write-options-json",
         default='{"mergeSchema":"true","compression":"snappy"}',
-        help='JSON dict of extra writer options for Delta (e.g. \'{"mergeSchema":"true"}\')',
+        help="JSON dict of extra writer options for the Parquet writer (e.g. '{\"mergeSchema\":\"true\"}')",
     )
 
     # ALS training outputs
-    parser.add_argument("--user-factors-base", required=True, help="Base path to write ALS user factors (Parquet).")
-    parser.add_argument("--item-factors-base", required=True, help="Base path to write ALS item factors (Parquet).")
+    parser.add_argument("--model-save-path", required=False, default="models/artifacts/", help="Base path to save ALS model artifacts (Parquet).")
 
     # ALS hyperparams
     parser.add_argument("--als-rank", type=int, default=64)
@@ -168,14 +169,14 @@ def main(argv: Optional[List[str]] = None) -> None:
             max_train_date=args.max_train_date,
         )
 
-        # 2) Combine & write Delta
+        # 2) Combine & write Parquet
         train_df, _ = _combine_and_write(
             train_parts=train_parts,
             test_parts=test_parts,
-            delta_train_path=args.delta_train_path,
-            delta_test_path=args.delta_test_path,
-            delta_table_train=args.delta_table_train,
-            delta_table_test=args.delta_table_test,
+            parquet_train_path=args.parquet_train_path,
+            parquet_test_path=args.parquet_test_path,
+            parquet_table_train=args.parquet_table_train,
+            parquet_table_test=args.parquet_table_test,
             shuffle_partitions=args.shuffle_partitions,
             target_repartition=args.target_repartition,
             extra_write_options=extra_write_options,
@@ -193,8 +194,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             implicit_prefs=bool(args.als_implicit),
             cold_start_strategy=args.als_cold_start,
             nonnegative=bool(args.als_nonnegative),
-            user_factors_path=args.user_factors_base,
-            item_factors_path=args.item_factors_base,
+            model_save_path=args.model_save_path,
         )
 
     finally:

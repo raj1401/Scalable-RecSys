@@ -60,10 +60,10 @@ COPY spark/conf/spark-defaults.conf "$SPARK_HOME/conf"
 RUN chmod u+x /opt/spark/sbin/* && \
     chmod u+x /opt/spark/bin/*
 
-ENV PYTHONPATH="${SPARK_HOME}/python"
+ENV PYTHONPATH="/workspace:${APP_HOME}:${SPARK_HOME}/python"
 
 COPY spark/entrypoint.sh ./entrypoint.sh
 
 RUN chmod +x entrypoint.sh
 
-ENTRYPOINT [ "./entrypoint.sh" ]
+ENTRYPOINT [ "/opt/app/entrypoint.sh" ]
