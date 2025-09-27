@@ -8,6 +8,7 @@ dependencies = [
     "faiss-cpu>=1.12.0",
     "grpcio>=1.75.0",
     "grpcio-tools>=1.75.0",
+    "mlflow>=3.4.0",
     "numpy>=2.3.3",
     "pyarrow>=21.0.0",
     "pyspark>=4.0.1",

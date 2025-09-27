@@ -25,10 +25,7 @@ submit:
 submit-standalone-spark:
 	docker compose exec spark-master spark-submit \
 		spark/apps/etl.py \
-		--input-files /workspace/data/combined_data_1.txt \
-		             /workspace/data/combined_data_2.txt \
-		             /workspace/data/combined_data_3.txt \
-		             /workspace/data/combined_data_4.txt \
+		--train-file /workspace/data/combined/train.txt \
+		--test-file /workspace/data/combined/test.txt \
 		--parquet-train-path /workspace/data/processed/parquet/train \
 		--parquet-test-path /workspace/data/processed/parquet/test \
-      --model-save-path /workspace/models/artifacts/ \

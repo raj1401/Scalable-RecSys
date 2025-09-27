@@ -1,11 +1,26 @@
 from pyspark.sql import SparkSession, Row, DataFrame, Window
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 import pyspark.sql.functions as F
-from pyspark.ml.recommendation import ALS
 from pyspark.sql.functions import col, year, month
-from typing import Tuple
-import datetime
+from pyspark.ml.recommendation import ALS
+from pyspark.errors.exceptions.base import AnalysisException
 from typing import Iterable, Optional
+import datetime
+
+try:
+    import mlflow
+    from mlflow import spark as mlflow_spark
+    MLFLOW_AVAILABLE = True
+except ImportError:
+    MLFLOW_AVAILABLE = False
+
+
+def build_spark(app_name: str, shuffle_partitions: Optional[int] = None) -> SparkSession:
+    """Create (or get) a SparkSession configured for this project."""
+    builder = SparkSession.builder.appName(app_name)
+    if shuffle_partitions is not None:
+        builder = builder.config("spark.sql.shuffle.partitions", int(shuffle_partitions))
+    return builder.getOrCreate()
 
 
 def parse_netflix_file(spark: SparkSession, path: str) -> DataFrame:
@@ -69,51 +84,20 @@ def parse_netflix_file(spark: SparkSession, path: str) -> DataFrame:
     return spark.createDataFrame(rows, schema)
 
 
-def split_dataframe_by_date(df: DataFrame, date_column: str, max_date: str) -> Tuple[DataFrame, DataFrame]:
-    """
-    Split a DataFrame into two DataFrames based on a date threshold.
-    
-    Args:
-        df (DataFrame): Input DataFrame to split
-        date_column (str): Name of the date column to use for splitting
-        max_date (str): Date threshold in string format (e.g., '2005-12-31')
-        
-    Returns:
-        Tuple[DataFrame, DataFrame]: A tuple containing:
-            - DataFrame with dates <= max_date
-            - DataFrame with dates > max_date
-    """
-    # Filter for dates less than or equal to max_date
-    before_df = df.filter(col(date_column) <= max_date)
-    
-    # Filter for dates greater than max_date
-    after_df = df.filter(col(date_column) > max_date)
-    
-    return before_df, after_df
+def _deduplicate_by_max(
+    df: DataFrame,
+    subset_cols: Iterable[str],
+    target_col: str = "RATING",
+) -> DataFrame:
+    """Remove duplicates keeping the row with the highest `target_col` (ties resolved deterministically)."""
+    window = Window.partitionBy(*subset_cols).orderBy(F.desc(target_col), F.desc("DATE"))
+    ranked = df.withColumn("_rank", F.row_number().over(window))
+    return ranked.filter(F.col("_rank") == 1).drop("_rank")
 
 
-def combine_dataframes(dfs: list, subset_cols: list, target_col: str = "RATING") -> DataFrame:
-    """
-    Combine multiple DataFrames into one, keeping only the row with the max value for the target column for duplicates.
-    
-    Args:
-        dfs (list): List of DataFrames to combine
-        subset_cols (list): Columns to consider as duplicates (e.g., ["MOVIE_ID", "CUST_ID", "DATE"])
-        target_col (str): Column to maximize (default: "RATING")
-    Returns:
-        DataFrame: Combined DataFrame with duplicates resolved by max target_col
-    """
-    if not dfs:
-        raise ValueError("No DataFrames provided")
-    
-    from functools import reduce
-    combined_df = reduce(lambda df1, df2: df1.unionByName(df2), dfs)
-
-    window = Window.partitionBy(*subset_cols).orderBy(F.desc(target_col))
-    ranked = combined_df.withColumn("_rank", F.row_number().over(window))
-    result = ranked.filter(F.col("_rank") == 1).drop("_rank")
-
-    return result
+def _drop_partition_columns(df: DataFrame, partition_cols: Iterable[str]) -> DataFrame:
+    cols_to_drop = [c for c in partition_cols if c in df.columns]
+    return df.drop(*cols_to_drop) if cols_to_drop else df
 
 
 def train_als(
@@ -128,6 +112,8 @@ def train_als(
     cold_start_strategy="drop",
     nonnegative=False,
     model_save_path="models/artifacts/",
+    mlflow_tracking_uri=None,
+    mlflow_experiment="netflix-als-training",
 ) -> None:
     """
     Train ALS model, extract user/item factors, and save as Parquet files.
@@ -135,33 +121,87 @@ def train_als(
         train_df: Input DataFrame for ALS training
         user_col, item_col, rating_col: Column names
         rank, reg_param, max_iter, implicit_prefs, cold_start_strategy, nonnegative: ALS params
-        user_factors_path, item_factors_path: Output Parquet paths
+        model_save_path: Base path to save model artifacts
+        mlflow_tracking_uri: MLflow tracking URI (optional)
+        mlflow_experiment: MLflow experiment name
     """
-    als = ALS(
-        userCol=user_col,
-        itemCol=item_col,
-        ratingCol=rating_col,
-        rank=rank,
-        regParam=reg_param,
-        maxIter=max_iter,
-        implicitPrefs=implicit_prefs,
-        coldStartStrategy=cold_start_strategy,
-        nonnegative=nonnegative
-    )
-    model = als.fit(train_df)
+    # Setup MLflow if available and requested
+    if MLFLOW_AVAILABLE and mlflow_tracking_uri:
+        mlflow.set_tracking_uri(mlflow_tracking_uri)
+        mlflow.set_experiment(mlflow_experiment)
 
-    user_f = model.userFactors.withColumnRenamed("id", user_col)
-    item_f = model.itemFactors.withColumnRenamed("id", item_col)
-    
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    user_f_path = model_save_path.rstrip("/") + f"/version_{timestamp}/user_factors"
-    item_f_path = model_save_path.rstrip("/") + f"/version_{timestamp}/item_factors"
+    # Training parameters for logging
+    params = {
+        "rank": rank,
+        "reg_param": reg_param,
+        "max_iter": max_iter,
+        "implicit_prefs": implicit_prefs,
+        "cold_start_strategy": cold_start_strategy,
+        "nonnegative": nonnegative,
+        "user_col": user_col,
+        "item_col": item_col,
+        "rating_col": rating_col,
+    }
 
-    user_f.write.mode("overwrite").parquet(user_f_path)
-    item_f.write.mode("overwrite").parquet(item_f_path)
+    def _train_and_save():
+        als = ALS(
+            userCol=user_col,
+            itemCol=item_col,
+            ratingCol=rating_col,
+            rank=rank,
+            regParam=reg_param,
+            maxIter=max_iter,
+            implicitPrefs=implicit_prefs,
+            coldStartStrategy=cold_start_strategy,
+            nonnegative=nonnegative
+        )
+        model = als.fit(train_df)
+
+        # Extract factors
+        user_f = model.userFactors.withColumnRenamed("id", user_col)
+        item_f = model.itemFactors.withColumnRenamed("id", item_col)
+        
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        user_f_path = model_save_path.rstrip("/") + f"/version_{timestamp}/user_factors"
+        item_f_path = model_save_path.rstrip("/") + f"/version_{timestamp}/item_factors"
+
+        user_f.write.mode("overwrite").parquet(user_f_path)
+        item_f.write.mode("overwrite").parquet(item_f_path)
+
+        # Log metrics if MLflow is available
+        if MLFLOW_AVAILABLE:
+            # Get basic dataset metrics
+            train_count = train_df.count()
+            user_count = train_df.select(user_col).distinct().count()
+            item_count = train_df.select(item_col).distinct().count()
+            
+            mlflow.log_metric("train_count", train_count)
+            mlflow.log_metric("user_count", user_count)
+            mlflow.log_metric("item_count", item_count)
+            
+            # Log model artifacts paths
+            mlflow.log_param("user_factors_path", user_f_path)
+            mlflow.log_param("item_factors_path", item_f_path)
+            mlflow.log_param("model_timestamp", timestamp)
+
+        return model, user_f_path, item_f_path
+
+    # Execute training with or without MLflow tracking
+    if MLFLOW_AVAILABLE and mlflow_tracking_uri:
+        with mlflow.start_run():
+            mlflow.log_params(params)
+            model, user_f_path, item_f_path = _train_and_save()
+            
+            # Log the Spark ML model
+            try:
+                mlflow_spark.log_model(model, "als_model")
+            except Exception as e:
+                print(f"Warning: Could not log Spark model to MLflow: {e}")
+    else:
+        model, user_f_path, item_f_path = _train_and_save()
 
 
-def write_dataframes_as_parquet(
+def write_dataframe_as_parquet(
     df: DataFrame,
     output_path: str,
     *,
@@ -248,3 +288,46 @@ def write_dataframes_as_parquet(
         # Restore previous shuffle setting
         if num_shuffle_partitions is not None and prev_shuffle is not None:
             spark.conf.set("spark.sql.shuffle.partitions", prev_shuffle)
+
+
+def upsert_ratings_parquet(
+    new_df: DataFrame,
+    output_path: str,
+    *,
+    subset_cols: Iterable[str] = ("MOVIE_ID", "CUST_ID", "DATE"),
+    target_col: str = "RATING",
+    partition_cols: Iterable[str] = ("year", "month"),
+    num_shuffle_partitions: Optional[int] = None,
+    target_repartition: Optional[int] = None,
+    table_name: Optional[str] = None,
+    extra_write_options: Optional[dict] = None,
+) -> DataFrame:
+    """Merge `new_df` into an existing Parquet dataset, deduplicate, and persist the result."""
+
+    spark = new_df.sparkSession
+
+    partition_cols = tuple(partition_cols)
+    base_new_df = _drop_partition_columns(new_df, partition_cols)
+
+    try:
+        existing_df = spark.read.parquet(output_path)
+        base_existing_df = _drop_partition_columns(existing_df, partition_cols)
+        combined_df = base_existing_df.unionByName(base_new_df, allowMissingColumns=True)
+    except AnalysisException:
+        combined_df = base_new_df
+
+    deduped_df = _deduplicate_by_max(combined_df, subset_cols=subset_cols, target_col=target_col)
+    deduped_df = deduped_df.dropna(subset=list(subset_cols) + [target_col])
+
+    write_dataframe_as_parquet(
+        df=deduped_df,
+        output_path=output_path,
+        mode="overwrite",
+        partition_cols=partition_cols,
+        num_shuffle_partitions=num_shuffle_partitions,
+        target_repartition=target_repartition,
+        table_name=table_name,
+        extra_write_options=extra_write_options,
+    )
+
+    return deduped_df
