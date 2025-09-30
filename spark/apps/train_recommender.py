@@ -49,17 +49,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 		help='coldStartStrategy parameter, default "drop".',
 	)
 
-	# MLflow tracking options
-	parser.add_argument(
-		"--mlflow-tracking-uri",
-		default=None,
-		help="MLflow tracking URI (e.g., http://localhost:5000 or file:///path/to/mlruns)",
-	)
-	parser.add_argument(
-		"--mlflow-experiment",
-		default="netflix-als-training",
-		help="MLflow experiment name",
-	)
+
 
 	args = parser.parse_args(argv)
 
@@ -80,8 +70,6 @@ def main(argv: Optional[List[str]] = None) -> None:
 			cold_start_strategy=args.als_cold_start,
 			nonnegative=bool(args.als_nonnegative),
 			model_save_path=args.model_save_path,
-			mlflow_tracking_uri=args.mlflow_tracking_uri,
-			mlflow_experiment=args.mlflow_experiment,
 		)
 	finally:
 		spark.stop()

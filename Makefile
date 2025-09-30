@@ -22,10 +22,16 @@ stop:
 submit:
 	docker exec spark-master spark-submit --master spark://spark-master:7077 --deploy-mode client ./apps/$(app)
 
-submit-standalone-spark:
+submit-standalone-spark-etl:
 	docker compose exec spark-master spark-submit \
 		spark/apps/etl.py \
 		--train-file /workspace/data/combined/train.txt \
 		--test-file /workspace/data/combined/test.txt \
 		--parquet-train-path /workspace/data/processed/parquet/train \
 		--parquet-test-path /workspace/data/processed/parquet/test \
+
+submit-standalone-spark-train:
+	docker compose exec spark-master spark-submit \
+		spark/apps/train_recommender.py \
+		--parquet-train-path /workspace/data/processed/parquet/train \
+		--model-save-path models/artifacts

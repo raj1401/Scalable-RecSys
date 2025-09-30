@@ -7,12 +7,7 @@ from pyspark.errors.exceptions.base import AnalysisException
 from typing import Iterable, Optional
 import datetime
 
-try:
-    import mlflow
-    from mlflow import spark as mlflow_spark
-    MLFLOW_AVAILABLE = True
-except ImportError:
-    MLFLOW_AVAILABLE = False
+
 
 
 def build_spark(app_name: str, shuffle_partitions: Optional[int] = None) -> SparkSession:
@@ -112,8 +107,6 @@ def train_als(
     cold_start_strategy="drop",
     nonnegative=False,
     model_save_path="models/artifacts/",
-    mlflow_tracking_uri=None,
-    mlflow_experiment="netflix-als-training",
 ) -> None:
     """
     Train ALS model, extract user/item factors, and save as Parquet files.
@@ -122,13 +115,8 @@ def train_als(
         user_col, item_col, rating_col: Column names
         rank, reg_param, max_iter, implicit_prefs, cold_start_strategy, nonnegative: ALS params
         model_save_path: Base path to save model artifacts
-        mlflow_tracking_uri: MLflow tracking URI (optional)
-        mlflow_experiment: MLflow experiment name
     """
-    # Setup MLflow if available and requested
-    if MLFLOW_AVAILABLE and mlflow_tracking_uri:
-        mlflow.set_tracking_uri(mlflow_tracking_uri)
-        mlflow.set_experiment(mlflow_experiment)
+
 
     # Training parameters for logging
     params = {
@@ -168,37 +156,10 @@ def train_als(
         user_f.write.mode("overwrite").parquet(user_f_path)
         item_f.write.mode("overwrite").parquet(item_f_path)
 
-        # Log metrics if MLflow is available
-        if MLFLOW_AVAILABLE:
-            # Get basic dataset metrics
-            train_count = train_df.count()
-            user_count = train_df.select(user_col).distinct().count()
-            item_count = train_df.select(item_col).distinct().count()
-            
-            mlflow.log_metric("train_count", train_count)
-            mlflow.log_metric("user_count", user_count)
-            mlflow.log_metric("item_count", item_count)
-            
-            # Log model artifacts paths
-            mlflow.log_param("user_factors_path", user_f_path)
-            mlflow.log_param("item_factors_path", item_f_path)
-            mlflow.log_param("model_timestamp", timestamp)
-
         return model, user_f_path, item_f_path
 
-    # Execute training with or without MLflow tracking
-    if MLFLOW_AVAILABLE and mlflow_tracking_uri:
-        with mlflow.start_run():
-            mlflow.log_params(params)
-            model, user_f_path, item_f_path = _train_and_save()
-            
-            # Log the Spark ML model
-            try:
-                mlflow_spark.log_model(model, "als_model")
-            except Exception as e:
-                print(f"Warning: Could not log Spark model to MLflow: {e}")
-    else:
-        model, user_f_path, item_f_path = _train_and_save()
+    # Execute training
+    model, user_f_path, item_f_path = _train_and_save()
 
 
 def write_dataframe_as_parquet(
