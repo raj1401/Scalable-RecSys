@@ -35,3 +35,12 @@ submit-standalone-spark-train:
 		spark/apps/train_recommender.py \
 		--parquet-train-path /workspace/data/processed/parquet/train \
 		--model-save-path models/artifacts
+
+submit-standalone-spark-test:
+	docker compose exec spark-master spark-submit \
+		spark/apps/test_recommender.py \
+		--model-path models/artifacts/version_20250930_212327 \
+		--test-file /workspace/data/combined/test.txt \
+		--k 10 \
+		--rating-threshold 4.0
+

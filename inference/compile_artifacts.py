@@ -29,8 +29,8 @@ import numpy as np
 LOGGER = logging.getLogger(__name__)
 
 
-DEFAULT_USER_ID_COLUMN = "CUST_ID"
-DEFAULT_ITEM_ID_COLUMN = "MOVIE_ID"
+DEFAULT_USER_ID_COLUMN = "id"
+DEFAULT_ITEM_ID_COLUMN = "id"
 FEATURES_COLUMN = "features"
 
 
@@ -148,13 +148,13 @@ def _write_lookup_json(path: Path, ids: Iterable[int]) -> None:
 def compile_version(version_dir: Path, config: CompileConfig) -> Path:
     """Compile a single artifact version into deployable numpy bundles."""
 
-    user_factors_dir = version_dir / "user_factors"
-    item_factors_dir = version_dir / "item_factors"
+    user_factors_dir = version_dir / "UserFactors"
+    item_factors_dir = version_dir / "ItemFactors"
 
     if not user_factors_dir.exists():
-        raise FileNotFoundError(f"user_factors directory missing in {version_dir}")
+        raise FileNotFoundError(f"UserFactors directory missing in {version_dir}")
     if not item_factors_dir.exists():
-        raise FileNotFoundError(f"item_factors directory missing in {version_dir}")
+        raise FileNotFoundError(f"ItemFactors directory missing in {version_dir}")
 
     output_dir = config.compiled_root / version_dir.name
     _ensure_output_dir(output_dir)

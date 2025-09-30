@@ -2,7 +2,7 @@ from pyspark.sql import SparkSession, Row, DataFrame, Window
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 import pyspark.sql.functions as F
 from pyspark.sql.functions import col, year, month
-from pyspark.ml.recommendation import ALS
+from pyspark.ml.recommendation import ALS, ALSModel
 from pyspark.errors.exceptions.base import AnalysisException
 from typing import Iterable, Optional
 import datetime
@@ -109,12 +109,12 @@ def train_als(
     model_save_path="models/artifacts/",
 ) -> None:
     """
-    Train ALS model, extract user/item factors, and save as Parquet files.
+    Train ALS model, extract user/item factors, save complete model, and save as Parquet files.
     Args:
         train_df: Input DataFrame for ALS training
         user_col, item_col, rating_col: Column names
         rank, reg_param, max_iter, implicit_prefs, cold_start_strategy, nonnegative: ALS params
-        model_save_path: Base path to save model artifacts
+        model_save_path: Base path to save model artifacts (factors as Parquet and complete model)
     """
 
 
@@ -144,22 +144,32 @@ def train_als(
             nonnegative=nonnegative
         )
         model = als.fit(train_df)
-
-        # Extract factors
-        user_f = model.userFactors.withColumnRenamed("id", user_col)
-        item_f = model.itemFactors.withColumnRenamed("id", item_col)
         
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        user_f_path = model_save_path.rstrip("/") + f"/version_{timestamp}/user_factors"
-        item_f_path = model_save_path.rstrip("/") + f"/version_{timestamp}/item_factors"
+        model_save_path = model_save_path.rstrip("/") + f"/version_{timestamp}"
+        
+        # Save the complete trained model
+        model.write().overwrite().save(model_save_path)
 
-        user_f.write.mode("overwrite").parquet(user_f_path)
-        item_f.write.mode("overwrite").parquet(item_f_path)
+        print(f"Model artifacts saved to {model_save_path}:")
 
-        return model, user_f_path, item_f_path
+        return model, model_save_path
 
     # Execute training
-    model, user_f_path, item_f_path = _train_and_save()
+    model, model_save_path = _train_and_save()
+
+
+def load_als_model(model_path: str) -> ALSModel:
+    """
+    Load a saved ALS model from the specified path.
+    
+    Args:
+        model_path (str): Path to the saved ALS model directory
+        
+    Returns:
+        ALSModel: The loaded ALS model ready for inference
+    """
+    return ALSModel.load(model_path)
 
 
 def write_dataframe_as_parquet(
