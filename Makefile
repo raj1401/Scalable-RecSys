@@ -40,7 +40,14 @@ submit-standalone-spark-test:
 	docker compose exec spark-master spark-submit \
 		spark/apps/test_recommender.py \
 		--model-path models/artifacts/version_20250930_212327 \
-		--test-file /workspace/data/combined/test.txt \
+		--test-parquet /workspace/data/processed/parquet/test \
 		--k 10 \
 		--rating-threshold 4.0
+
+submit-standalone-spark-drift:
+	docker compose exec spark-master spark-submit \
+		spark/apps/drift_detection.py \
+		--csv_path /workspace/data/streaming/current.csv \
+		--output_path /workspace/data/streaming \
+		--train_ratio 0.8
 

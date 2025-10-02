@@ -12,7 +12,7 @@ Usage examples:
     # Evaluate with custom parameters
     python spark/apps/test_recommender.py \
         --model-path models/artifacts/version_20250930_212327 \
-        --test-file data/combined/test.txt \
+        --test-parquet data/processed/parquet/test \
         --k 20 \
         --rating-threshold 3.5
         
@@ -32,7 +32,7 @@ from pyspark.sql.functions import col, collect_list, explode, lit, when, desc, r
 from pyspark.sql.types import DoubleType, ArrayType, IntegerType
 from pyspark.ml.evaluation import RegressionEvaluator
 
-from spark.apps.common import build_spark, parse_netflix_file, load_als_model
+from spark.apps.common import build_spark, load_als_model
 
 
 def compute_rmse_mae(predictions_df: DataFrame, rating_col: str = "RATING", prediction_col: str = "prediction") -> tuple[float, float]:
@@ -214,7 +214,7 @@ def compute_ranking_metrics(
 
 def evaluate_model(
     model_path: str,
-    test_file_path: str,
+    test_parquet_path: str,
     user_col: str = "CUST_ID",
     item_col: str = "MOVIE_ID",
     rating_col: str = "RATING",
@@ -226,7 +226,7 @@ def evaluate_model(
     
     Args:
         model_path: Path to saved ALS model
-        test_file_path: Path to test data file (Netflix format)
+        test_parquet_path: Path to test data in Parquet format
         user_col: User column name
         item_col: Item column name  
         rating_col: Rating column name
@@ -245,9 +245,9 @@ def evaluate_model(
         model = load_als_model(model_path)
         print(f"✓ Model loaded successfully! Rank: {model.rank}")
         
-        # Parse test data
-        print(f"Parsing test data from: {test_file_path}")
-        test_df = parse_netflix_file(spark, test_file_path)
+        # Load test data from Parquet
+        print(f"Loading test data from: {test_parquet_path}")
+        test_df = spark.read.parquet(test_parquet_path)
         
         # Remove rows with null values
         test_df = test_df.filter(
@@ -276,7 +276,7 @@ def evaluate_model(
         # Compile results
         results = {
             "model_path": model_path,
-            "test_file": test_file_path,
+            "test_file": test_parquet_path,
             "test_ratings_count": test_count,
             "model_rank": model.rank,
             "rmse": rmse,
@@ -306,10 +306,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     
     parser.add_argument(
-        "--test-file",
+        "--test-parquet",
         required=False,
-        default="data/combined/test.txt",
-        help="Path to test data file in Netflix format"
+        default="data/processed/parquet/test",
+        help="Path to test data in Parquet format"
     )
     
     parser.add_argument(
@@ -345,7 +345,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         # Run evaluation
         results = evaluate_model(
             model_path=args.model_path,
-            test_file_path=args.test_file,
+            test_parquet_path=args.test_parquet,
             k=args.k,
             rating_threshold=args.rating_threshold
         )
