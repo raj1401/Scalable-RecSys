@@ -51,6 +51,12 @@ submit-standalone-spark-drift:
 		--output_path /workspace/data/streaming \
 		--train_ratio 0.8
 
+submit-standalone-spark-future:
+	docker compose exec spark-master spark-submit \
+		spark/apps/create_futures.py \
+		--future-file /workspace/data/combined/future.txt \
+		--csv-output-path /workspace/data/processed/future.csv
+
 submit-spark-process-detect-drift:
 	docker compose exec spark-master spark-submit \
 		spark/apps/drift_detection.py \
