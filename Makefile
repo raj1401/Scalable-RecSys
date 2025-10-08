@@ -51,3 +51,24 @@ submit-standalone-spark-drift:
 		--output_path /workspace/data/streaming \
 		--train_ratio 0.8
 
+submit-spark-process-detect-drift:
+	docker compose exec spark-master spark-submit \
+		spark/apps/drift_detection.py \
+		process_and_detect \
+		--csv_path /workspace/data/streaming/current.csv \
+		--output_path /workspace/data/streaming \
+		--train_ratio 0.8 \
+		--model_path /workspace/models/artifacts/version_20250930_212327 \
+		--original_train_path /workspace/data/processed/parquet/train \
+		--original_test_path /workspace/data/processed/parquet/test \
+		--kl_threshold 0.1 \
+		--mean_shift_threshold 0.2 \
+		--median_shift_threshold 0.5
+
+submit-spark-merge-streaming:
+	docker compose exec spark-master spark-submit \
+		spark/apps/drift_detection.py \
+		merge_job \
+		--streaming_path /workspace/data/streaming \
+		--processed_path /workspace/data/processed/parquet
+
