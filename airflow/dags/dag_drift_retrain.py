@@ -22,9 +22,9 @@ from datetime import datetime
 from airflow import DAG
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.operators.python import PythonOperator, BranchPythonOperator
-from airflow.operators.dummy import DummyOperator
+from airflow.operators.empty import EmptyOperator
 
-from common.config import (
+from airflow.dags.common.config import (
     DEFAULT_DAG_ARGS,
     SPARK_APPS_PATH,
     DATA_PATH,
@@ -43,7 +43,7 @@ from common.config import (
     DEFAULT_MEAN_WEIGHT,
     DEFAULT_MEDIAN_WEIGHT,
 )
-from common.model_utils import get_latest_model_version_from_path
+from airflow.dags.common.model_utils import get_latest_model_version_from_path
 
 
 # Drift detection thresholds (can override config defaults)
@@ -129,7 +129,7 @@ dag = DAG(
     'drift_detection_retrain_pipeline',
     default_args=DEFAULT_DAG_ARGS,
     description='Drift detection and automated model retraining pipeline',
-    schedule_interval='@daily',  # Run daily to check for new streaming data
+    schedule='@daily',  # Run daily to check for new streaming data
     start_date=datetime(2025, 10, 9),
     catchup=False,
     tags=['spark', 'ml', 'drift-detection', 'retraining', 'monitoring'],
@@ -187,13 +187,12 @@ detect_drift_task = SparkSubmitOperator(
 check_retrain_task = BranchPythonOperator(
     task_id='check_retrain',
     python_callable=check_retrain_decision,
-    provide_context=True,
     dag=dag,
 )
 
 
 # Task 5: Skip retraining (dummy task for "no retrain" branch)
-skip_retrain_task = DummyOperator(
+skip_retrain_task = EmptyOperator(
     task_id='skip_retrain',
     dag=dag,
 )

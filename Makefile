@@ -115,6 +115,9 @@ airflow-clean:
 run-all:
 	make down && docker compose up -d
 
+run-all-scaled:
+	make down && docker compose up -d --scale spark-worker=3
+
 run-spark-only:
 	make down && docker compose up -d spark-master spark-worker spark-history
 

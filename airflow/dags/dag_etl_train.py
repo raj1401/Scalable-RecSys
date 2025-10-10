@@ -19,7 +19,7 @@ from airflow import DAG
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.operators.python import PythonOperator
 
-from common.config import (
+from airflow.dags.common.config import (
     DEFAULT_DAG_ARGS,
     SPARK_MASTER,
     TRAIN_FILE,
@@ -33,7 +33,7 @@ from common.config import (
     DEFAULT_RATING_THRESHOLD,
     SPARK_APPS_PATH,
 )
-from common.model_utils import get_latest_model_version_from_path
+from airflow.dags.common.model_utils import get_latest_model_version_from_path
 
 
 def find_latest_model_version(**context):
@@ -51,7 +51,7 @@ dag = DAG(
     'etl_train_test_pipeline',
     default_args=DEFAULT_DAG_ARGS,
     description='Complete ETL, training, and testing pipeline using SparkSubmitOperator',
-    schedule_interval=None,  # Run only when triggered manually (runs once)
+    schedule=None,  # Run only when triggered manually (runs once)
     start_date=datetime(2025, 10, 9),
     catchup=False,
     tags=['spark', 'ml', 'etl', 'training', 'testing'],

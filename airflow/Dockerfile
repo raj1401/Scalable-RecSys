@@ -9,16 +9,19 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy entrypoint script
+# Copy entrypoint script and ensure Unix line endings
 COPY airflow/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 USER airflow
 
-# Install Airflow providers
+# Install Airflow providers and database drivers
 RUN pip install --no-cache-dir \
     apache-airflow-providers-apache-spark \
-    apache-airflow-providers-docker
+    apache-airflow-providers-docker \
+    psycopg2-binary \
+    asyncpg \
+    graphviz
 
 # Set PYTHONPATH to include workspace (for DAG imports if needed)
 ENV PYTHONPATH="/workspace:${PYTHONPATH}"

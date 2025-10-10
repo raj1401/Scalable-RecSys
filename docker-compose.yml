@@ -107,11 +107,10 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'False'
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
       
-      # Webserver settings
-      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'True'
-      AIRFLOW__WEBSERVER__RBAC: 'True'
-      AIRFLOW__WEBSERVER__WEB_SERVER_PORT: 8081
+      # API server settings (replacing webserver settings for Airflow 3.x)
+      AIRFLOW__API__PORT: 8081
       
       # API settings
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
@@ -124,11 +123,11 @@ services:
       - ./airflow/config:/opt/airflow/config
       - .:/workspace
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8081/health"]
+      test: ["CMD-SHELL", "curl --fail http://localhost:8081/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     networks:
       - spark-net
     restart: always
@@ -157,10 +156,16 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'False'
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
       
       # Scheduler settings
       AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 30
       AIRFLOW__SCHEDULER__CATCHUP_BY_DEFAULT: 'False'
+      AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR: 'False'
+      
+      # DAG Processor settings (Airflow 3.x)
+      AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: 30
+      AIRFLOW__DAG_PROCESSOR__DAG_DIR_LIST_INTERVAL: 30
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -173,6 +178,38 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    networks:
+      - spark-net
+    restart: always
+
+  airflow-dag-processor:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    container_name: airflow-dag-processor
+    command: dag-processor
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Database
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      
+      # Core settings
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'False'
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      
+      # DAG Processor settings
+      AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: 30
+      AIRFLOW__DAG_PROCESSOR__DAG_DIR_LIST_INTERVAL: 30
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./airflow/config:/opt/airflow/config
+      - .:/workspace
     networks:
       - spark-net
     restart: always

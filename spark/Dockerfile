@@ -64,6 +64,6 @@ ENV PYTHONPATH="/workspace:${APP_HOME}:${SPARK_HOME}/python"
 
 COPY spark/entrypoint.sh ./entrypoint.sh
 
-RUN chmod +x entrypoint.sh
+RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
 
 ENTRYPOINT [ "/opt/app/entrypoint.sh" ]

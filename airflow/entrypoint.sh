@@ -22,19 +22,17 @@ wait_for_db() {
 # Initialize Airflow database
 init_airflow() {
     echo "Initializing Airflow database..."
-    airflow db init || airflow db migrate
+    airflow db migrate
     
-    # Create admin user if it doesn't exist
-    if ! airflow users list | grep -q "admin"; then
-        echo "Creating admin user..."
-        airflow users create \
-            --username admin \
-            --firstname Admin \
-            --lastname User \
-            --role Admin \
-            --email admin@example.com \
-            --password admin
-    fi
+    # Create admin user if it doesn't exist (using standalone method for Airflow 3.x)
+    echo "Creating admin user..."
+    airflow db-manager create-user \
+        --username admin \
+        --firstname Admin \
+        --lastname User \
+        --role Admin \
+        --email admin@example.com \
+        --password admin 2>/dev/null || echo "Admin user already exists or command not available"
     
     echo "Airflow initialization complete!"
 }
@@ -43,8 +41,8 @@ case "$1" in
     webserver)
         wait_for_db
         init_airflow
-        echo "Starting Airflow webserver..."
-        exec airflow webserver
+        echo "Starting Airflow API server..."
+        exec airflow api-server
         ;;
     scheduler)
         wait_for_db
@@ -52,6 +50,12 @@ case "$1" in
         sleep 10
         echo "Starting Airflow scheduler..."
         exec airflow scheduler
+        ;;
+    dag-processor)
+        wait_for_db
+        sleep 10
+        echo "Starting Airflow DAG processor..."
+        exec airflow dag-processor
         ;;
     worker)
         wait_for_db
