@@ -78,3 +78,48 @@ submit-spark-merge-streaming:
 		--streaming_path /workspace/data/streaming \
 		--processed_path /workspace/data/processed/parquet
 
+# ============================================================================
+# Airflow Commands
+# ============================================================================
+
+airflow-logs:
+	docker compose logs -f airflow-webserver airflow-scheduler
+
+airflow-webserver-logs:
+	docker compose logs -f airflow-webserver
+
+airflow-scheduler-logs:
+	docker compose logs -f airflow-scheduler
+
+airflow-cli:
+	docker compose exec airflow-webserver airflow $(cmd)
+
+airflow-list-dags:
+	docker compose exec airflow-webserver airflow dags list
+
+airflow-trigger-dag:
+	docker compose exec airflow-webserver airflow dags trigger $(dag)
+
+airflow-test-dag:
+	docker compose exec airflow-webserver airflow dags test $(dag)
+
+airflow-bash:
+	docker compose exec airflow-webserver bash
+
+airflow-clean:
+	docker compose down -v
+	rm -rf airflow/logs/*
+	rm -rf airflow/config/*
+
+# Combined commands
+run-all:
+	make down && docker compose up -d
+
+run-spark-only:
+	make down && docker compose up -d spark-master spark-worker spark-history
+
+run-airflow-only:
+	make down && docker compose up -d postgres airflow-webserver airflow-scheduler
+
+logs-all:
+	docker compose logs -f

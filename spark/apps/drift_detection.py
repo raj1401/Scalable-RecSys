@@ -17,25 +17,43 @@ Features:
 - Weighted heuristic-based retraining decision (KL divergence, mean shift, median shift)
 - Upsert streaming data into processed data directories
 
+The module is designed for use in Airflow DAGs with independent, self-contained operations:
+
+1. Process Streaming Data (Spark Job):
+   - Loads CSV data
+   - Splits into train/test
+   - Saves as Parquet
+   - Manages its own Spark session
+   
+2. Detect Drift (Spark Job):
+   - Detects data drift
+   - Optionally detects model drift
+   - Returns results dictionary (for XCom in Airflow)
+   - Manages its own Spark session
+   
+3. Check Retrain (Python Function):
+   - Called directly via should_retrain() function
+   - Receives drift results via XCom from detect_drift task
+   - Makes retraining decision
+   - No Spark session required
+   
+4. Merge Data (Spark Job):
+   - Merges streaming data into processed data
+   - Manages its own Spark session
+
 Usage:
     # Process streaming CSV data
     python drift_detection.py process --csv_path data/streaming/current.csv
     
-    # Detect data drift
-    python drift_detection.py data_drift --original_train_path data/processed/parquet/train \\
-                                         --current_train_path data/streaming/train
+    # Detect drift (data + model) - returns results dictionary
+    python drift_detection.py detect_drift --model_path models/artifacts/version_XXX
     
-    # Detect model drift
-    python drift_detection.py model_drift --model_path models/artifacts/version_XXX \\
-                                          --original_test_path data/processed/parquet/test \\
-                                          --current_test_path data/streaming/test
-    
-    # Check if retraining is needed (data drift only)
-    python drift_detection.py check_retrain
-    
-    # Check if retraining is needed (data + model drift)
-    python drift_detection.py check_retrain --model_path models/artifacts/version_XXX \\
-                                            --kl_threshold 0.1 --mean_shift_threshold 0.2
+    # Check retrain - use should_retrain() function directly in Airflow
+    from drift_detection import should_retrain
+    retrain_decision = should_retrain(
+        data_drift_result=ti.xcom_pull(task_ids='detect_drift')['data_drift'],
+        model_drift_result=ti.xcom_pull(task_ids='detect_drift')['model_drift']
+    )
     
     # Merge streaming data into processed data
     python drift_detection.py merge --streaming_path data/streaming \\
@@ -108,87 +126,107 @@ def split_streaming_data(df: DataFrame, train_ratio: float = 0.8) -> tuple[DataF
 
 
 def process_streaming_data(
-    spark: SparkSession,
     csv_path: str,
-    output_base_path: str,
-    train_ratio: float = 0.8
+    output_base_path: str = "data/streaming",
+    train_ratio: float = 0.8,
+    shuffle_partitions: int = 200
 ) -> None:
     """
     Main function to process streaming CSV data and create Parquet files.
     Upserts data into existing Parquet files to avoid duplicates.
     
+    This function manages its own Spark session lifecycle.
+    
     Args:
-        spark: SparkSession instance
         csv_path: Path to the input CSV file
         output_base_path: Base path for output (will create train/test subdirectories)
         train_ratio: Proportion of data for training (default 0.8)
+        shuffle_partitions: Number of shuffle partitions for Spark (default: 200)
     """
-    print(f"Loading streaming data from: {csv_path}")
+    print("\n" + "=" * 80)
+    print("SPARK JOB: PROCESS STREAMING DATA")
+    print("=" * 80)
     
-    # Load the CSV data
-    df = load_streaming_csv(spark, csv_path)
-    
-    print(f"Loaded {df.count()} rows from CSV")
-    
-    # Split the data
-    train_df, test_df = split_streaming_data(df, train_ratio)
-    
-    # Define output paths
-    train_output_path = os.path.join(output_base_path, "train")
-    test_output_path = os.path.join(output_base_path, "test")
-    
-    # Get counts for logging
-    train_count = train_df.count()
-    test_count = test_df.count()
-    
-    print(f"Split data: {train_count} training samples, {test_count} test samples")
-    
-    # Flag to track if all writes were successful
-    write_success = True
+    # Build Spark session
+    spark = build_spark("ProcessStreamingData", shuffle_partitions=shuffle_partitions)
     
     try:
-        # Upsert training data to existing Parquet files (or create new if they don't exist)
-        print(f"Upserting training data to: {train_output_path}")
-        upsert_ratings_parquet(
-            new_df=train_df,
-            output_path=train_output_path,
-            subset_cols=("MOVIE_ID", "CUST_ID", "DATE"),
-            target_col="RATING",
-            partition_cols=("year", "month"),
-            target_repartition=4
-        )
-        print(f"Successfully upserted {train_count} training samples")
+        print(f"\nLoading streaming data from: {csv_path}")
         
-        # Upsert test data to existing Parquet files (or create new if they don't exist)
-        print(f"Upserting test data to: {test_output_path}")
-        upsert_ratings_parquet(
-            new_df=test_df,
-            output_path=test_output_path,
-            subset_cols=("MOVIE_ID", "CUST_ID", "DATE"),
-            target_col="RATING",
-            partition_cols=("year", "month"),
-            target_repartition=4
-        )
-        print(f"Successfully upserted {test_count} test samples")
+        # Load the CSV data
+        df = load_streaming_csv(spark, csv_path)
         
-        print("Streaming data processing completed successfully!")
+        print(f"Loaded {df.count()} rows from CSV")
+        
+        # Split the data
+        train_df, test_df = split_streaming_data(df, train_ratio)
+        
+        # Define output paths
+        train_output_path = os.path.join(output_base_path, "train")
+        test_output_path = os.path.join(output_base_path, "test")
+        
+        # Get counts for logging
+        train_count = train_df.count()
+        test_count = test_df.count()
+        
+        print(f"Split data: {train_count} training samples, {test_count} test samples")
+        
+        # Flag to track if all writes were successful
+        write_success = True
+        
+        try:
+            # Upsert training data to existing Parquet files (or create new if they don't exist)
+            print(f"Upserting training data to: {train_output_path}")
+            upsert_ratings_parquet(
+                new_df=train_df,
+                output_path=train_output_path,
+                subset_cols=("MOVIE_ID", "CUST_ID", "DATE"),
+                target_col="RATING",
+                partition_cols=("year", "month"),
+                target_repartition=4
+            )
+            print(f"Successfully upserted {train_count} training samples")
+            
+            # Upsert test data to existing Parquet files (or create new if they don't exist)
+            print(f"Upserting test data to: {test_output_path}")
+            upsert_ratings_parquet(
+                new_df=test_df,
+                output_path=test_output_path,
+                subset_cols=("MOVIE_ID", "CUST_ID", "DATE"),
+                target_col="RATING",
+                partition_cols=("year", "month"),
+                target_repartition=4
+            )
+            print(f"Successfully upserted {test_count} test samples")
+            
+            print("Streaming data processing completed successfully!")
+            
+        except Exception as e:
+            print(f"Error during data processing: {str(e)}")
+            write_success = False
+            raise
+        
+        # Delete the CSV file only if all writes were successful
+        if write_success:
+            try:
+                if os.path.exists(csv_path):
+                    os.remove(csv_path)
+                    print(f"Successfully deleted source CSV file: {csv_path}")
+                else:
+                    print(f"Source CSV file not found for deletion: {csv_path}")
+            except Exception as e:
+                print(f"Warning: Could not delete source CSV file {csv_path}: {str(e)}")
+                # Don't raise the exception since the main processing was successful
+        
+        print("\n" + "=" * 80)
+        print("SPARK JOB COMPLETED SUCCESSFULLY")
+        print("=" * 80)
         
     except Exception as e:
-        print(f"Error during data processing: {str(e)}")
-        write_success = False
+        print(f"\n✗ Error in processing job: {str(e)}")
         raise
-    
-    # Delete the CSV file only if all writes were successful
-    if write_success:
-        try:
-            if os.path.exists(csv_path):
-                os.remove(csv_path)
-                print(f"Successfully deleted source CSV file: {csv_path}")
-            else:
-                print(f"Source CSV file not found for deletion: {csv_path}")
-        except Exception as e:
-            print(f"Warning: Could not delete source CSV file {csv_path}: {str(e)}")
-            # Don't raise the exception since the main processing was successful
+    finally:
+        spark.stop()
 
 
 def compute_kl_divergence(p: np.ndarray, q: np.ndarray, epsilon: float = 1e-10) -> float:
@@ -521,6 +559,93 @@ def detect_model_drift(
     return result
 
 
+def detect_drift_job(
+    model_path: str = None,
+    original_train_path: str = "data/processed/parquet/train",
+    current_train_path: str = "data/streaming/train",
+    original_test_path: str = "data/processed/parquet/test",
+    current_test_path: str = "data/streaming/test",
+    shuffle_partitions: int = 200
+) -> Dict[str, any]:
+    """
+    Spark job to detect data drift and optionally model drift.
+    
+    This function manages its own Spark session lifecycle.
+    
+    Args:
+        model_path: Path to trained ALS model (optional, for model drift)
+        original_train_path: Path to original training data
+        current_train_path: Path to current streaming training data
+        original_test_path: Path to original test data
+        current_test_path: Path to current streaming test data
+        shuffle_partitions: Number of shuffle partitions for Spark (default: 200)
+        
+    Returns:
+        Dictionary containing:
+            - data_drift: Data drift detection results
+            - model_drift: Model drift detection results (if model_path provided)
+    """
+    print("\n" + "=" * 80)
+    print("SPARK JOB: DETECT DRIFT")
+    print("=" * 80)
+    
+    # Build Spark session
+    spark = build_spark("DetectDrift", shuffle_partitions=shuffle_partitions)
+    
+    results = {
+        "data_drift": None,
+        "model_drift": None
+    }
+    
+    try:
+        # Step 1: Detect data drift
+        print("\n" + "-" * 80)
+        print("STEP 1: DETECTING DATA DRIFT")
+        print("-" * 80)
+        
+        data_drift_result = detect_data_drift(
+            spark=spark,
+            original_train_path=original_train_path,
+            current_train_path=current_train_path
+        )
+        results["data_drift"] = data_drift_result
+        print("✓ Data drift detection completed")
+        
+        # Step 2: Detect model drift (if model path provided)
+        if model_path:
+            print("\n" + "-" * 80)
+            print("STEP 2: DETECTING MODEL DRIFT")
+            print("-" * 80)
+            
+            model_drift_result = detect_model_drift(
+                spark=spark,
+                model_path=model_path,
+                original_test_path=original_test_path,
+                current_test_path=current_test_path
+            )
+            results["model_drift"] = model_drift_result
+            print("✓ Model drift detection completed")
+        else:
+            print("\n" + "-" * 80)
+            print("STEP 2: SKIPPING MODEL DRIFT (no model path provided)")
+            print("-" * 80)
+        
+        print("\n" + "=" * 80)
+        print("SPARK JOB COMPLETED SUCCESSFULLY")
+        print("=" * 80)
+        print(f"Data Drift Detected:  ✓")
+        print(f"Model Drift Detected: {'✓' if model_path else 'N/A'}")
+        print("=" * 80)
+        
+        return results
+        
+    except Exception as e:
+        print(f"\n✗ Error in drift detection job: {str(e)}")
+        raise
+    finally:
+        spark.stop()
+
+
 def should_retrain(
     data_drift_result: Dict[str, any] = None,
     model_drift_result: Dict[str, any] = None,
@@ -810,158 +935,6 @@ def merge_streaming_to_processed(
     print("=" * 80)
 
 
-def process_and_detect_drift(
-    csv_path: str,
-    output_base_path: str = "data/streaming",
-    train_ratio: float = 0.8,
-    model_path: str = None,
-    original_train_path: str = "data/processed/parquet/train",
-    original_test_path: str = "data/processed/parquet/test",
-    kl_threshold: float = 0.1,
-    mean_shift_threshold: float = 0.2,
-    median_shift_threshold: float = 0.5,
-    kl_weight: float = 0.5,
-    mean_weight: float = 0.3,
-    median_weight: float = 0.2,
-    shuffle_partitions: int = 200
-) -> Dict[str, any]:
-    """
-    Spark job to process streaming CSV data and detect drift.
-    
-    This is a complete pipeline that:
-    1. Loads and processes streaming CSV data
-    2. Splits into train/test sets
-    3. Saves as Parquet files
-    4. Detects data drift
-    5. Detects model drift (if model_path provided)
-    6. Makes retraining decision
-    
-    Args:
-        csv_path: Path to the input CSV file
-        output_base_path: Base path for output (default: data/streaming)
-        train_ratio: Proportion of data for training (default: 0.8)
-        model_path: Path to trained ALS model (optional, for model drift)
-        original_train_path: Path to original training data
-        original_test_path: Path to original test data
-        kl_threshold: Threshold for KL divergence
-        mean_shift_threshold: Threshold for mean shift
-        median_shift_threshold: Threshold for median shift
-        kl_weight: Weight for KL divergence in retraining decision
-        mean_weight: Weight for mean shift in retraining decision
-        median_weight: Weight for median shift in retraining decision
-        shuffle_partitions: Number of shuffle partitions for Spark
-        
-    Returns:
-        Dictionary containing:
-            - data_drift: Data drift detection results
-            - model_drift: Model drift detection results (if model_path provided)
-            - retrain_decision: Retraining decision results
-            - csv_processed: Boolean indicating if CSV was processed successfully
-    """
-    print("\n" + "=" * 80)
-    print("SPARK JOB: PROCESS AND DETECT DRIFT")
-    print("=" * 80)
-    
-    # Build Spark session
-    spark = build_spark("ProcessAndDetectDrift", shuffle_partitions=shuffle_partitions)
-    
-    results = {
-        "data_drift": None,
-        "model_drift": None,
-        "retrain_decision": None,
-        "csv_processed": False
-    }
-    
-    try:
-        # Step 1: Process streaming CSV data
-        print("\n" + "-" * 80)
-        print("STEP 1: PROCESSING STREAMING CSV DATA")
-        print("-" * 80)
-        
-        if not os.path.exists(csv_path):
-            raise FileNotFoundError(f"Input CSV file not found: {csv_path}")
-        
-        process_streaming_data(
-            spark=spark,
-            csv_path=csv_path,
-            output_base_path=output_base_path,
-            train_ratio=train_ratio
-        )
-        results["csv_processed"] = True
-        print("✓ CSV processing completed")
-        
-        # Define paths for drift detection
-        current_train_path = os.path.join(output_base_path, "train")
-        current_test_path = os.path.join(output_base_path, "test")
-        
-        # Step 2: Detect data drift
-        print("\n" + "-" * 80)
-        print("STEP 2: DETECTING DATA DRIFT")
-        print("-" * 80)
-        
-        data_drift_result = detect_data_drift(
-            spark=spark,
-            original_train_path=original_train_path,
-            current_train_path=current_train_path
-        )
-        results["data_drift"] = data_drift_result
-        print("✓ Data drift detection completed")
-        
-        # Step 3: Detect model drift (if model path provided)
-        model_drift_result = None
-        if model_path:
-            print("\n" + "-" * 80)
-            print("STEP 3: DETECTING MODEL DRIFT")
-            print("-" * 80)
-            
-            model_drift_result = detect_model_drift(
-                spark=spark,
-                model_path=model_path,
-                original_test_path=original_test_path,
-                current_test_path=current_test_path
-            )
-            results["model_drift"] = model_drift_result
-            print("✓ Model drift detection completed")
-        else:
-            print("\n" + "-" * 80)
-            print("STEP 3: SKIPPING MODEL DRIFT (no model path provided)")
-            print("-" * 80)
-        
-        # Step 4: Make retraining decision
-        print("\n" + "-" * 80)
-        print("STEP 4: RETRAINING DECISION")
-        print("-" * 80)
-        
-        retrain_result = should_retrain(
-            data_drift_result=data_drift_result,
-            model_drift_result=model_drift_result,
-            kl_threshold=kl_threshold,
-            mean_shift_threshold=mean_shift_threshold,
-            median_shift_threshold=median_shift_threshold,
-            kl_weight=kl_weight,
-            mean_weight=mean_weight,
-            median_weight=median_weight
-        )
-        results["retrain_decision"] = retrain_result
-        
-        print("\n" + "=" * 80)
-        print("SPARK JOB COMPLETED SUCCESSFULLY")
-        print("=" * 80)
-        print(f"CSV Processed:        ✓")
-        print(f"Data Drift Detected:  ✓")
-        print(f"Model Drift Detected: {'✓' if model_path else 'N/A'}")
-        print(f"Retrain Decision:     {'RETRAIN ⚠️' if retrain_result['should_retrain'] else 'NO RETRAIN ✓'}")
-        print("=" * 80)
-        
-        return results
-        
-    except Exception as e:
-        print(f"\n✗ Error in drift detection job: {str(e)}")
-        raise
-    finally:
-        spark.stop()
-
-
 def merge_streaming_data_job(
     streaming_base_path: str = "data/streaming",
     processed_base_path: str = "data/processed/parquet",
@@ -1036,266 +1009,133 @@ def main():
     # Add subparsers for different operations
     subparsers = parser.add_subparsers(dest="operation", help="Operation to perform")
     
-    # Process streaming data subcommand
-    process_parser = subparsers.add_parser("process", help="Process streaming CSV data")
-    process_parser.add_argument(
-        "--csv_path",
-        default="data/streaming/current.csv",
-        help="Path to the input CSV file (default: data/streaming/current.csv)"
+    # Process streaming data subcommand (Spark job)
+    process_parser = subparsers.add_parser(
+        "process",
+        help="[SPARK JOB] Process streaming CSV data"
     )
     process_parser.add_argument(
-        "--output_path",
-        default="data/streaming",
-        help="Base output path for Parquet files (default: data/streaming)"
-    )
-    process_parser.add_argument(
-        "--train_ratio",
-        type=float,
-        default=0.8,
-        help="Proportion of data for training (default: 0.8)"
-    )
-    process_parser.add_argument(
-        "--shuffle_partitions",
-        type=int,
-        default=200,
-        help="Number of shuffle partitions for Spark (default: 200)"
-    )
-    
-    # Data drift detection subcommand
-    data_drift_parser = subparsers.add_parser("data_drift", help="Detect data drift")
-    data_drift_parser.add_argument(
-        "--original_train_path",
-        default="data/processed/parquet/train",
-        help="Path to original training data (default: data/processed/parquet/train)"
-    )
-    data_drift_parser.add_argument(
-        "--current_train_path",
-        default="data/streaming/train",
-        help="Path to current training data (default: data/streaming/train)"
-    )
-    data_drift_parser.add_argument(
-        "--shuffle_partitions",
-        type=int,
-        default=200,
-        help="Number of shuffle partitions for Spark (default: 200)"
-    )
-    
-    # Model drift detection subcommand
-    model_drift_parser = subparsers.add_parser("model_drift", help="Detect model drift")
-    model_drift_parser.add_argument(
-        "--model_path",
-        required=True,
-        help="Path to the trained ALS model"
-    )
-    model_drift_parser.add_argument(
-        "--original_test_path",
-        default="data/processed/parquet/test",
-        help="Path to original test data (default: data/processed/parquet/test)"
-    )
-    model_drift_parser.add_argument(
-        "--current_test_path",
-        default="data/streaming/test",
-        help="Path to current test data (default: data/streaming/test)"
-    )
-    model_drift_parser.add_argument(
-        "--shuffle_partitions",
-        type=int,
-        default=200,
-        help="Number of shuffle partitions for Spark (default: 200)"
-    )
-    
-    # Check retraining subcommand
-    retrain_parser = subparsers.add_parser("check_retrain", help="Determine if retraining is needed")
-    retrain_parser.add_argument(
-        "--model_path",
-        help="Path to the trained ALS model (optional, for model drift)"
-    )
-    retrain_parser.add_argument(
-        "--original_train_path",
-        default="data/processed/parquet/train",
-        help="Path to original training data (default: data/processed/parquet/train)"
-    )
-    retrain_parser.add_argument(
-        "--current_train_path",
-        default="data/streaming/train",
-        help="Path to current training data (default: data/streaming/train)"
-    )
-    retrain_parser.add_argument(
-        "--original_test_path",
-        default="data/processed/parquet/test",
-        help="Path to original test data (default: data/processed/parquet/test)"
-    )
-    retrain_parser.add_argument(
-        "--current_test_path",
-        default="data/streaming/test",
-        help="Path to current test data (default: data/streaming/test)"
-    )
-    retrain_parser.add_argument(
-        "--kl_threshold",
-        type=float,
-        default=0.1,
-        help="Threshold for KL divergence (default: 0.1)"
-    )
-    retrain_parser.add_argument(
-        "--mean_shift_threshold",
-        type=float,
-        default=0.2,
-        help="Threshold for mean shift (default: 0.2)"
-    )
-    retrain_parser.add_argument(
-        "--median_shift_threshold",
-        type=float,
-        default=0.5,
-        help="Threshold for median shift (default: 0.5)"
-    )
-    retrain_parser.add_argument(
-        "--kl_weight",
-        type=float,
-        default=0.5,
-        help="Weight for KL divergence (default: 0.5)"
-    )
-    retrain_parser.add_argument(
-        "--mean_weight",
-        type=float,
-        default=0.3,
-        help="Weight for mean shift (default: 0.3)"
-    )
-    retrain_parser.add_argument(
-        "--median_weight",
-        type=float,
-        default=0.2,
-        help="Weight for median shift (default: 0.2)"
-    )
-    retrain_parser.add_argument(
-        "--shuffle_partitions",
-        type=int,
-        default=200,
-        help="Number of shuffle partitions for Spark (default: 200)"
-    )
-    
-    # Merge streaming data subcommand
-    merge_parser = subparsers.add_parser("merge", help="Merge streaming data into processed data")
-    merge_parser.add_argument(
-        "--streaming_path",
-        default="data/streaming",
-        help="Base path for streaming data (default: data/streaming)"
-    )
-    merge_parser.add_argument(
-        "--processed_path",
-        default="data/processed/parquet",
-        help="Base path for processed data (default: data/processed/parquet)"
-    )
-    merge_parser.add_argument(
-        "--keep_streaming",
-        action="store_true",
-        help="Keep streaming data after merge (default: delete)"
-    )
-    merge_parser.add_argument(
-        "--shuffle_partitions",
-        type=int,
-        default=200,
-        help="Number of shuffle partitions for Spark (default: 200)"
-    )
-    
-    # Process and detect drift job (standalone Spark job)
-    process_detect_parser = subparsers.add_parser(
-        "process_and_detect",
-        help="[SPARK JOB] Process streaming data and detect drift"
-    )
-    process_detect_parser.add_argument(
         "--csv_path",
         required=True,
         help="Path to the input CSV file"
     )
-    process_detect_parser.add_argument(
+    process_parser.add_argument(
         "--output_path",
         default="data/streaming",
         help="Base output path for Parquet files (default: data/streaming)"
     )
-    process_detect_parser.add_argument(
+    process_parser.add_argument(
         "--train_ratio",
         type=float,
         default=0.8,
         help="Proportion of data for training (default: 0.8)"
     )
-    process_detect_parser.add_argument(
-        "--model_path",
-        help="Path to the trained ALS model (optional, for model drift)"
-    )
-    process_detect_parser.add_argument(
-        "--original_train_path",
-        default="data/processed/parquet/train",
-        help="Path to original training data (default: data/processed/parquet/train)"
-    )
-    process_detect_parser.add_argument(
-        "--original_test_path",
-        default="data/processed/parquet/test",
-        help="Path to original test data (default: data/processed/parquet/test)"
-    )
-    process_detect_parser.add_argument(
-        "--kl_threshold",
-        type=float,
-        default=0.1,
-        help="Threshold for KL divergence (default: 0.1)"
-    )
-    process_detect_parser.add_argument(
-        "--mean_shift_threshold",
-        type=float,
-        default=0.2,
-        help="Threshold for mean shift (default: 0.2)"
-    )
-    process_detect_parser.add_argument(
-        "--median_shift_threshold",
-        type=float,
-        default=0.5,
-        help="Threshold for median shift (default: 0.5)"
-    )
-    process_detect_parser.add_argument(
-        "--kl_weight",
-        type=float,
-        default=0.5,
-        help="Weight for KL divergence (default: 0.5)"
-    )
-    process_detect_parser.add_argument(
-        "--mean_weight",
-        type=float,
-        default=0.3,
-        help="Weight for mean shift (default: 0.3)"
-    )
-    process_detect_parser.add_argument(
-        "--median_weight",
-        type=float,
-        default=0.2,
-        help="Weight for median shift (default: 0.2)"
-    )
-    process_detect_parser.add_argument(
+    process_parser.add_argument(
         "--shuffle_partitions",
         type=int,
         default=200,
         help="Number of shuffle partitions for Spark (default: 200)"
     )
     
-    # Merge streaming data job (standalone Spark job)
-    merge_job_parser = subparsers.add_parser(
-        "merge_job",
+    # Detect drift subcommand (Spark job)
+    detect_drift_parser = subparsers.add_parser(
+        "detect_drift",
+        help="[SPARK JOB] Detect data and model drift"
+    )
+    detect_drift_parser.add_argument(
+        "--model_path",
+        help="Path to the trained ALS model (optional, for model drift)"
+    )
+    detect_drift_parser.add_argument(
+        "--original_train_path",
+        default="data/processed/parquet/train",
+        help="Path to original training data (default: data/processed/parquet/train)"
+    )
+    detect_drift_parser.add_argument(
+        "--current_train_path",
+        default="data/streaming/train",
+        help="Path to current streaming training data (default: data/streaming/train)"
+    )
+    detect_drift_parser.add_argument(
+        "--original_test_path",
+        default="data/processed/parquet/test",
+        help="Path to original test data (default: data/processed/parquet/test)"
+    )
+    detect_drift_parser.add_argument(
+        "--current_test_path",
+        default="data/streaming/test",
+        help="Path to current streaming test data (default: data/streaming/test)"
+    )
+    detect_drift_parser.add_argument(
+        "--shuffle_partitions",
+        type=int,
+        default=200,
+        help="Number of shuffle partitions for Spark (default: 200)"
+    )
+    
+    # Check retraining subcommand (Python only, no Spark)
+    retrain_parser = subparsers.add_parser(
+        "check_retrain",
+        help="[PYTHON] Determine if retraining is needed based on drift results"
+    )
+    retrain_parser.add_argument(
+        "--kl_threshold",
+        type=float,
+        default=0.1,
+        help="Threshold for KL divergence (default: 0.1)"
+    )
+    retrain_parser.add_argument(
+        "--mean_shift_threshold",
+        type=float,
+        default=0.2,
+        help="Threshold for mean shift (default: 0.2)"
+    )
+    retrain_parser.add_argument(
+        "--median_shift_threshold",
+        type=float,
+        default=0.5,
+        help="Threshold for median shift (default: 0.5)"
+    )
+    retrain_parser.add_argument(
+        "--kl_weight",
+        type=float,
+        default=0.5,
+        help="Weight for KL divergence (default: 0.5)"
+    )
+    retrain_parser.add_argument(
+        "--mean_weight",
+        type=float,
+        default=0.3,
+        help="Weight for mean shift (default: 0.3)"
+    )
+    retrain_parser.add_argument(
+        "--median_weight",
+        type=float,
+        default=0.2,
+        help="Weight for median shift (default: 0.2)"
+    )
+    
+    # Merge streaming data subcommand (Spark job)
+    merge_parser = subparsers.add_parser(
+        "merge",
         help="[SPARK JOB] Merge streaming data into processed data"
     )
-    merge_job_parser.add_argument(
+    merge_parser.add_argument(
         "--streaming_path",
         default="data/streaming",
         help="Base path for streaming data (default: data/streaming)"
     )
-    merge_job_parser.add_argument(
+    merge_parser.add_argument(
         "--processed_path",
         default="data/processed/parquet",
         help="Base path for processed data (default: data/processed/parquet)"
     )
-    merge_job_parser.add_argument(
+    merge_parser.add_argument(
         "--keep_streaming",
         action="store_true",
         help="Keep streaming data after merge (default: delete)"
     )
-    merge_job_parser.add_argument(
+    merge_parser.add_argument(
         "--shuffle_partitions",
         type=int,
         default=200,
@@ -1308,10 +1148,6 @@ def main():
         parser.print_help()
         return
     
-    # Build Spark session
-    shuffle_partitions = getattr(args, 'shuffle_partitions', 200)
-    spark = build_spark("DriftDetection", shuffle_partitions=shuffle_partitions)
-    
     try:
         if args.operation == "process":
             # Validate train_ratio
@@ -1322,120 +1158,41 @@ def main():
             if not os.path.exists(args.csv_path):
                 raise FileNotFoundError(f"Input CSV file not found: {args.csv_path}")
             
-            # Process the streaming data
+            # Process the streaming data (manages its own Spark session)
             process_streaming_data(
-                spark=spark,
-                csv_path=args.csv_path,
-                output_base_path=args.output_path,
-                train_ratio=args.train_ratio
-            )
-            
-        elif args.operation == "data_drift":
-            # Detect data drift
-            result = detect_data_drift(
-                spark=spark,
-                original_train_path=args.original_train_path,
-                current_train_path=args.current_train_path
-            )
-            print("\n✓ Data drift detection completed successfully")
-            
-        elif args.operation == "model_drift":
-            # Detect model drift
-            result = detect_model_drift(
-                spark=spark,
-                model_path=args.model_path,
-                original_test_path=args.original_test_path,
-                current_test_path=args.current_test_path
-            )
-            print("\n✓ Model drift detection completed successfully")
-            
-        elif args.operation == "check_retrain":
-            # Check if retraining is needed
-            data_drift_result = None
-            model_drift_result = None
-            
-            # Always run data drift detection
-            print("Running data drift detection...")
-            data_drift_result = detect_data_drift(
-                spark=spark,
-                original_train_path=args.original_train_path,
-                current_train_path=args.current_train_path
-            )
-            
-            # Run model drift detection if model path is provided
-            if args.model_path:
-                print("\nRunning model drift detection...")
-                model_drift_result = detect_model_drift(
-                    spark=spark,
-                    model_path=args.model_path,
-                    original_test_path=args.original_test_path,
-                    current_test_path=args.current_test_path
-                )
-            
-            # Make retraining decision
-            retrain_result = should_retrain(
-                data_drift_result=data_drift_result,
-                model_drift_result=model_drift_result,
-                kl_threshold=args.kl_threshold,
-                mean_shift_threshold=args.mean_shift_threshold,
-                median_shift_threshold=args.median_shift_threshold,
-                kl_weight=args.kl_weight,
-                mean_weight=args.mean_weight,
-                median_weight=args.median_weight
-            )
-            
-            # Exit with code 0 if no retrain needed, 1 if retrain needed
-            # This allows shell scripts to check the exit code
-            import sys
-            sys.exit(0 if not retrain_result["should_retrain"] else 1)
-            
-        elif args.operation == "merge":
-            # Merge streaming data into processed data
-            merge_streaming_to_processed(
-                spark=spark,
-                streaming_base_path=args.streaming_path,
-                processed_base_path=args.processed_path,
-                delete_streaming_after_merge=not args.keep_streaming
-            )
-            print("\n✓ Merge completed successfully")
-            
-        elif args.operation == "process_and_detect":
-            # Standalone Spark job: Process and detect drift
-            # Note: This operation manages its own Spark session
-            spark.stop()  # Stop the session created above
-            
-            # Validate train_ratio
-            if not 0 < args.train_ratio < 1:
-                raise ValueError("train_ratio must be between 0 and 1")
-            
-            result = process_and_detect_drift(
                 csv_path=args.csv_path,
                 output_base_path=args.output_path,
                 train_ratio=args.train_ratio,
-                model_path=args.model_path,
-                original_train_path=args.original_train_path,
-                original_test_path=args.original_test_path,
-                kl_threshold=args.kl_threshold,
-                mean_shift_threshold=args.mean_shift_threshold,
-                median_shift_threshold=args.median_shift_threshold,
-                kl_weight=args.kl_weight,
-                mean_weight=args.mean_weight,
-                median_weight=args.median_weight,
                 shuffle_partitions=args.shuffle_partitions
             )
             
-            # Exit with appropriate code based on retraining decision
-            import sys
-            if result["retrain_decision"] and result["retrain_decision"]["should_retrain"]:
-                sys.exit(1)  # Exit code 1 indicates retraining needed
-            else:
-                sys.exit(0)  # Exit code 0 indicates no retraining needed
+        elif args.operation == "detect_drift":
+            # Detect drift (manages its own Spark session)
+            result = detect_drift_job(
+                model_path=args.model_path,
+                original_train_path=args.original_train_path,
+                current_train_path=args.current_train_path,
+                original_test_path=args.original_test_path,
+                current_test_path=args.current_test_path,
+                shuffle_partitions=args.shuffle_partitions
+            )
             
-        elif args.operation == "merge_job":
-            # Standalone Spark job: Merge streaming data
-            # Note: This operation manages its own Spark session
-            spark.stop()  # Stop the session created above
+            # Return the result dictionary (to be passed via XCom in Airflow)
+            print(f"\n✓ Drift detection completed")
+            print(f"   Data drift detected: {'✓' if result['data_drift'] else '✗'}")
+            print(f"   Model drift detected: {'✓' if result['model_drift'] else '✗'}")
+            return result
             
+        elif args.operation == "check_retrain":
+            # This operation is designed to be called from Airflow with drift results from XCom
+            # For standalone use, you need to provide the drift dictionaries programmatically
+            raise NotImplementedError(
+                "check_retrain operation should be called via should_retrain() function directly in Airflow. "
+                "Pass drift results from detect_drift task via XCom."
+            )
+            
+        elif args.operation == "merge":
+            # Merge streaming data (manages its own Spark session)
             result = merge_streaming_data_job(
                 streaming_base_path=args.streaming_path,
                 processed_base_path=args.processed_path,
@@ -1443,17 +1200,13 @@ def main():
                 shuffle_partitions=args.shuffle_partitions
             )
             
-            print(f"\nMerge Job Results:")
+            print(f"\nMerge Results:")
             print(f"  Training data merged: {'✓' if result['train_merged'] else '✗'}")
             print(f"  Test data merged:     {'✓' if result['test_merged'] else '✗'}")
         
     except Exception as e:
         print(f"Error: {str(e)}")
         raise
-    finally:
-        # Only stop spark if it's still running (job operations manage their own sessions)
-        if args.operation not in ["process_and_detect", "merge_job"]:
-            spark.stop()
 
 
 if __name__ == "__main__":

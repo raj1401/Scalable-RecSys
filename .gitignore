@@ -17,3 +17,16 @@ models/
 
 # Misc
 .DS_Store
+
+# Airflow logs
+airflow/logs/*
+!airflow/logs/.gitkeep
+
+# Airflow config (generated)
+airflow/config/*
+!airflow/config/.gitkeep
+
+# Airflow database
+airflow/airflow.db
+airflow/airflow.cfg
+airflow/webserver_config.py
