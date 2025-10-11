@@ -38,7 +38,7 @@ init_airflow() {
 }
 
 case "$1" in
-    webserver)
+    webserver|api-server)
         wait_for_db
         init_airflow
         echo "Starting Airflow API server..."
@@ -57,10 +57,10 @@ case "$1" in
         echo "Starting Airflow DAG processor..."
         exec airflow dag-processor
         ;;
-    worker)
+    worker|celery-worker)
         wait_for_db
         sleep 10
-        echo "Starting Airflow worker..."
+        echo "Starting Airflow Celery worker..."
         exec airflow celery worker
         ;;
     triggerer)

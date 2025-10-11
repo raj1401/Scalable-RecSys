@@ -129,7 +129,7 @@ dag = DAG(
     'drift_detection_retrain_pipeline',
     default_args=DEFAULT_DAG_ARGS,
     description='Drift detection and automated model retraining pipeline',
-    schedule='@daily',  # Run daily to check for new streaming data
+    schedule=None,  # Run daily to check for new streaming data
     start_date=datetime(2025, 10, 9),
     catchup=False,
     tags=['spark', 'ml', 'drift-detection', 'retraining', 'monitoring'],

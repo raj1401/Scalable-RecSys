@@ -83,28 +83,28 @@ submit-spark-merge-streaming:
 # ============================================================================
 
 airflow-logs:
-	docker compose logs -f airflow-webserver airflow-scheduler
+	docker compose logs -f airflow-apiserver airflow-scheduler
 
-airflow-webserver-logs:
-	docker compose logs -f airflow-webserver
+airflow-apiserver-logs:
+	docker compose logs -f airflow-apiserver
 
 airflow-scheduler-logs:
 	docker compose logs -f airflow-scheduler
 
 airflow-cli:
-	docker compose exec airflow-webserver airflow $(cmd)
+	docker compose exec airflow-apiserver airflow $(cmd)
 
 airflow-list-dags:
-	docker compose exec airflow-webserver airflow dags list
+	docker compose exec airflow-apiserver airflow dags list
 
 airflow-trigger-dag:
-	docker compose exec airflow-webserver airflow dags trigger $(dag)
+	docker compose exec airflow-apiserver airflow dags trigger $(dag)
 
 airflow-test-dag:
-	docker compose exec airflow-webserver airflow dags test $(dag)
+	docker compose exec airflow-apiserver airflow dags test $(dag)
 
 airflow-bash:
-	docker compose exec airflow-webserver bash
+	docker compose exec airflow-apiserver bash
 
 airflow-clean:
 	docker compose down -v
@@ -122,7 +122,7 @@ run-spark-only:
 	make down && docker compose up -d spark-master spark-worker spark-history
 
 run-airflow-only:
-	make down && docker compose up -d postgres airflow-webserver airflow-scheduler
+	make down && docker compose up -d postgres redis airflow-apiserver airflow-scheduler
 
 logs-all:
 	docker compose logs -f
