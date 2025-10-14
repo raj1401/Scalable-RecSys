@@ -65,6 +65,7 @@ etl_task = SparkSubmitOperator(
     application=f'{SPARK_APPS_PATH}/etl.py',
     name='netflix-etl',
     conn_id='spark_default',  # Can be configured in Airflow connections
+    deploy_mode='client',
     verbose=True,
     application_args=[
         '--train-file', TRAIN_FILE,

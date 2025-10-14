@@ -5,8 +5,14 @@ USER root
 # Install Java 21 and other system dependencies needed for Spark
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+    sudo \
     curl \
+    ca-certificates \
+    vim \
+    unzip \
+    rsync \
     msopenjdk-21 \
+    build-essential \
     procps && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
