@@ -1,6 +1,6 @@
 # Scalable Recommendation System
 
-A production-ready, scalable movie recommendation system built with Apache Spark and Apache Airflow, deployed via Docker containers.
+A production-ready, scalable movie recommendation system built with Apache Spark, Apache Kafka and Apache Airflow, deployed via Docker containers, orchestrated via Docker Compose.
 
 ## Overview
 
@@ -28,11 +28,9 @@ This project implements a complete end-to-end ML pipeline for movie recommendati
 # Build all images
 make build
 
-# Start Spark + Airflow + PostgreSQL
+# Start Spark + Kafka + Airflow + PostgreSQL
 make run-all
 ```
-
-The `run-all` target now also launches the Kafka broker, asynchronous HTTP APIs, and ALS worker alongside the Spark/Airflow services.
 
 ### 2. Access Services
 
@@ -43,7 +41,7 @@ The `run-all` target now also launches the Kafka broker, asynchronous HTTP APIs,
 | Spark History Server | http://localhost:18080     | -             |
 | Kafka Producer API   | http://localhost:8082      | -             |
 | Kafka Result API     | http://localhost:8083      | -             |
-| Kafka Broker         | PLAINTEXT://localhost:9092 | -             |
+| Kafka Broker         | http://localhost:9092      | -             |
 
 ### 3. Run the ML Pipeline
 
@@ -75,16 +73,16 @@ make submit-standalone-spark-test
 ┌─────────────────────────────────────────────────────────────┐
 │                    Docker Network (spark-net)               │
 │                                                             │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐ │
-│  │   Airflow    │───►│ Spark Master │───►│ Spark Workers│ │
-│  │ Orchestrator │    │              │    │              │ │
-│  └──────────────┘    └──────────────┘    └──────────────┘ │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
+│  │   Airflow    │───►│ Spark Master │───►│ Spark Workers│   │
+│  │ Orchestrator │    │              │    │              │   │
+│  └──────────────┘    └──────────────┘    └──────────────┘   │
 │         │                                                   │
 │         ▼                                                   │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐ │
-│  │  PostgreSQL  │    │    Kafka     │    │ gRPC Server  │ │
-│  │  (Metadata)  │    │  (Streaming) │    │  (Serving)   │ │
-│  └──────────────┘    └──────────────┘    └──────────────┘ │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
+│  │  PostgreSQL  │    │    Kafka     │    │ gRPC Server  │   │
+│  │  (Metadata)  │    │  (Streaming) │    │  (Serving)   │   │
+│  └──────────────┘    └──────────────┘    └──────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 
 Within the Kafka layer now live three services: the producer FastAPI gateway (`8082`), the result FastAPI gateway (`8083`), and the ALS worker that bridges Kafka with the compiled model artifacts.
@@ -429,10 +427,6 @@ docker compose up -d --scale spark-worker=10
 - [Apache Spark Docs](https://spark.apache.org/docs/latest/)
 - [gRPC Python Guide](https://grpc.io/docs/languages/python/)
 
-## License
-
-MIT
-
 ## Contributing
 
 1. Fork the repository
@@ -442,5 +436,3 @@ MIT
 5. Submit pull request
 
 ---
-
-**Built with:** Apache Spark 4.0.1 | Apache Airflow 2.10.4 | Python 3.13 | Docker | gRPC
