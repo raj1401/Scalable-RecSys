@@ -44,6 +44,11 @@ class RecommenderStub(object):
                 request_serializer=recs__pb2.FoldInRequest.SerializeToString,
                 response_deserializer=recs__pb2.RecommendResponse.FromString,
                 _registered_method=True)
+        self.PredictRatings = channel.unary_unary(
+                '/recs.Recommender/PredictRatings',
+                request_serializer=recs__pb2.PredictRatingsRequest.SerializeToString,
+                response_deserializer=recs__pb2.PredictRatingsResponse.FromString,
+                _registered_method=True)
         self.Health = channel.unary_unary(
                 '/recs.Recommender/Health',
                 request_serializer=recs__pb2.HealthRequest.SerializeToString,
@@ -68,6 +73,13 @@ class RecommenderServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PredictRatings(self, request, context):
+        """Predict ratings for user-item pairs
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Health(self, request, context):
         """Health
         """
@@ -87,6 +99,11 @@ def add_RecommenderServicer_to_server(servicer, server):
                     servicer.FoldInAndRecommend,
                     request_deserializer=recs__pb2.FoldInRequest.FromString,
                     response_serializer=recs__pb2.RecommendResponse.SerializeToString,
+            ),
+            'PredictRatings': grpc.unary_unary_rpc_method_handler(
+                    servicer.PredictRatings,
+                    request_deserializer=recs__pb2.PredictRatingsRequest.FromString,
+                    response_serializer=recs__pb2.PredictRatingsResponse.SerializeToString,
             ),
             'Health': grpc.unary_unary_rpc_method_handler(
                     servicer.Health,
@@ -148,6 +165,33 @@ class Recommender(object):
             '/recs.Recommender/FoldInAndRecommend',
             recs__pb2.FoldInRequest.SerializeToString,
             recs__pb2.RecommendResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PredictRatings(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/recs.Recommender/PredictRatings',
+            recs__pb2.PredictRatingsRequest.SerializeToString,
+            recs__pb2.PredictRatingsResponse.FromString,
             options,
             channel_credentials,
             insecure,

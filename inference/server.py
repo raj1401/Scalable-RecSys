@@ -252,6 +252,56 @@ class RecommenderServicer(recs_pb2_grpc.RecommenderServicer):
         )
         return recs_pb2.RecommendResponse(item_ids=item_ids, scores=scores)  # type: ignore[attr-defined]
 
+    def PredictRatings(self, request, context):  # noqa: N802
+        """Predict ratings for given user-item pairs.
+        
+        Args:
+            request: PredictRatingsRequest containing user_ids and item_ids arrays
+            context: gRPC context
+            
+        Returns:
+            PredictRatingsResponse with predicted ratings for each pair
+        """
+        user_ids = list(request.user_ids)
+        item_ids = list(request.item_ids)
+        
+        if len(user_ids) != len(item_ids):
+            context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+            context.set_details("user_ids and item_ids must have the same length")
+            return recs_pb2.PredictRatingsResponse()  # type: ignore[attr-defined]
+        
+        if not user_ids:
+            return recs_pb2.PredictRatingsResponse(ratings=[])  # type: ignore[attr-defined]
+        
+        ratings = []
+        for user_id, item_id in zip(user_ids, item_ids):
+            user_id = int(user_id)
+            item_id = int(item_id)
+            
+            # Check if user and item exist in the model
+            if user_id not in self.bundle.uid2row:
+                # Return 0.0 or a default rating for unknown users
+                ratings.append(0.0)
+                continue
+                
+            if item_id not in self.bundle.vid2row:
+                # Return 0.0 or a default rating for unknown items
+                ratings.append(0.0)
+                continue
+            
+            # Get the latent vectors for user and item
+            user_row = self.bundle.uid2row[user_id]
+            item_row = self.bundle.vid2row[item_id]
+            
+            # Predict rating as dot product of user and item vectors
+            user_vec = self.bundle.U[user_row]
+            item_vec = self.bundle.V[item_row]
+            predicted_rating = float(np.dot(user_vec, item_vec))
+            
+            ratings.append(predicted_rating)
+        
+        return recs_pb2.PredictRatingsResponse(ratings=ratings)  # type: ignore[attr-defined]
+
 
 def serve(
     *,

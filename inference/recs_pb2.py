@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nrecs.proto\x12\x04recs\"O\n\x17RecommendForUserRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\x03\x12\t\n\x01k\x18\x02 \x01(\x05\x12\x18\n\x10\x65xclude_item_ids\x18\x03 \x03(\x03\"W\n\rFoldInRequest\x12\t\n\x01k\x18\x01 \x01(\x05\x12\x10\n\x08item_ids\x18\x02 \x03(\x03\x12\x0f\n\x07ratings\x18\x03 \x03(\x02\x12\x18\n\x10\x65xclude_item_ids\x18\x04 \x03(\x03\"5\n\x11RecommendResponse\x12\x10\n\x08item_ids\x18\x01 \x03(\x03\x12\x0e\n\x06scores\x18\x02 \x03(\x02\"\x0f\n\rHealthRequest\" \n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t2\xd2\x01\n\x0bRecommender\x12J\n\x10RecommendForUser\x12\x1d.recs.RecommendForUserRequest\x1a\x17.recs.RecommendResponse\x12\x42\n\x12\x46oldInAndRecommend\x12\x13.recs.FoldInRequest\x1a\x17.recs.RecommendResponse\x12\x33\n\x06Health\x12\x13.recs.HealthRequest\x1a\x14.recs.HealthResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nrecs.proto\x12\x04recs\"O\n\x17RecommendForUserRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\x03\x12\t\n\x01k\x18\x02 \x01(\x05\x12\x18\n\x10\x65xclude_item_ids\x18\x03 \x03(\x03\"W\n\rFoldInRequest\x12\t\n\x01k\x18\x01 \x01(\x05\x12\x10\n\x08item_ids\x18\x02 \x03(\x03\x12\x0f\n\x07ratings\x18\x03 \x03(\x02\x12\x18\n\x10\x65xclude_item_ids\x18\x04 \x03(\x03\"5\n\x11RecommendResponse\x12\x10\n\x08item_ids\x18\x01 \x03(\x03\x12\x0e\n\x06scores\x18\x02 \x03(\x02\"\x0f\n\rHealthRequest\" \n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\";\n\x15PredictRatingsRequest\x12\x10\n\x08user_ids\x18\x01 \x03(\x03\x12\x10\n\x08item_ids\x18\x02 \x03(\x03\")\n\x16PredictRatingsResponse\x12\x0f\n\x07ratings\x18\x01 \x03(\x02\x32\x9f\x02\n\x0bRecommender\x12J\n\x10RecommendForUser\x12\x1d.recs.RecommendForUserRequest\x1a\x17.recs.RecommendResponse\x12\x42\n\x12\x46oldInAndRecommend\x12\x13.recs.FoldInRequest\x1a\x17.recs.RecommendResponse\x12K\n\x0ePredictRatings\x12\x1b.recs.PredictRatingsRequest\x1a\x1c.recs.PredictRatingsResponse\x12\x33\n\x06Health\x12\x13.recs.HealthRequest\x1a\x14.recs.HealthResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -41,6 +41,10 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_HEALTHREQUEST']._serialized_end=260
   _globals['_HEALTHRESPONSE']._serialized_start=262
   _globals['_HEALTHRESPONSE']._serialized_end=294
-  _globals['_RECOMMENDER']._serialized_start=297
-  _globals['_RECOMMENDER']._serialized_end=507
+  _globals['_PREDICTRATINGSREQUEST']._serialized_start=296
+  _globals['_PREDICTRATINGSREQUEST']._serialized_end=355
+  _globals['_PREDICTRATINGSRESPONSE']._serialized_start=357
+  _globals['_PREDICTRATINGSRESPONSE']._serialized_end=398
+  _globals['_RECOMMENDER']._serialized_start=401
+  _globals['_RECOMMENDER']._serialized_end=688
 # @@protoc_insertion_point(module_scope)

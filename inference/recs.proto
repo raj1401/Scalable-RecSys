@@ -6,6 +6,8 @@ service Recommender {
   rpc RecommendForUser(RecommendForUserRequest) returns (RecommendResponse);
   // Fold-in a new user from recent (item_id, rating) and then recommend
   rpc FoldInAndRecommend(FoldInRequest) returns (RecommendResponse);
+  // Predict ratings for user-item pairs
+  rpc PredictRatings(PredictRatingsRequest) returns (PredictRatingsResponse);
   // Health
   rpc Health(HealthRequest) returns (HealthResponse);
 }
@@ -30,3 +32,12 @@ message RecommendResponse {
 
 message HealthRequest {}
 message HealthResponse { string status = 1; }
+
+message PredictRatingsRequest {
+  repeated int64 user_ids = 1;
+  repeated int64 item_ids = 2;  // same length as user_ids
+}
+
+message PredictRatingsResponse {
+  repeated float ratings = 1;  // predicted ratings for each (user_id, item_id) pair
+}

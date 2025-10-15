@@ -2,7 +2,18 @@
 """
 gRPC client for the ALS recommender service.
 TEMPORARY
-Usage: uv run client.py --host localhost --port 50051 --user-id 10 --k 10 --exclude 99 100 --fold-in-items 10 20 30 --fold-in-ratings 5 3 4
+Usage: 
+  # Basic recommendations
+  uv run client.py --host localhost --port 50051 --user-id 10 --k 10
+  
+  # With exclusions
+  uv run client.py --user-id 10 --k 10 --exclude 99 100
+  
+  # Fold-in recommendations
+  uv run client.py --fold-in-items 10 20 30 --fold-in-ratings 5 3 4 --k 10
+  
+  # Predict ratings for user-item pairs
+  uv run client.py --predict-user-ids 1 2 3 --predict-item-ids 100 200 300
 """
 from __future__ import annotations
 
@@ -59,6 +70,20 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=(),
         help="Ratings aligned with --fold-in-items",
     )
+    parser.add_argument(
+        "--predict-user-ids",
+        type=int,
+        nargs="*",
+        default=(),
+        help="User ids for rating prediction",
+    )
+    parser.add_argument(
+        "--predict-item-ids",
+        type=int,
+        nargs="*",
+        default=(),
+        help="Item ids for rating prediction (aligned with --predict-user-ids)",
+    )
     return parser.parse_args(argv)
 
 
@@ -101,6 +126,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_recommendations("FoldInAndRecommend", fold_in_resp.item_ids, fold_in_resp.scores)
         else:
             print("FoldInAndRecommend: skipped (provide --fold-in-items and --fold-in-ratings to enable)")
+
+        if args.predict_user_ids and args.predict_item_ids:
+            if len(args.predict_user_ids) != len(args.predict_item_ids):
+                raise ValueError("--predict-user-ids and --predict-item-ids must have equal lengths")
+            predict_resp = stub.PredictRatings(
+                recs_pb2.PredictRatingsRequest(
+                    user_ids=args.predict_user_ids,
+                    item_ids=args.predict_item_ids,
+                )
+            )
+            pairs = list(zip(args.predict_user_ids, args.predict_item_ids, predict_resp.ratings))
+            formatted = ", ".join(f"({u},{i}):{r:.3f}" for u, i, r in pairs)
+            print(f"PredictRatings: [{formatted}]" if pairs else "PredictRatings: <none>")
+        else:
+            print("PredictRatings: skipped (provide --predict-user-ids and --predict-item-ids to enable)")
     except grpc.RpcError as exc:  # pragma: no cover - network edge cases
         print(f"RPC failed: {exc.code().name} - {exc.details()}")
         return 1
