@@ -2,6 +2,11 @@
 
 A production-ready, scalable movie recommendation system built with Apache Spark, Apache Kafka and Apache Airflow, deployed via Docker containers, orchestrated via Docker Compose.
 
+<!-- Project architecture diagram -->
+<p align="center">
+   <img src="diagram.png" alt="Architecture Diagram" style="max-width:100%;height:auto;" />
+</p>
+
 ## Overview
 
 This project implements a complete end-to-end ML pipeline for movie recommendations:
@@ -34,14 +39,14 @@ make run-all
 
 ### 2. Access Services
 
-| Service              | URL                        | Credentials   |
-| -------------------- | -------------------------- | ------------- |
-| Airflow UI           | http://localhost:8081      | admin / admin |
-| Spark Master UI      | http://localhost:8080      | -             |
-| Spark History Server | http://localhost:18080     | -             |
-| Kafka Producer API   | http://localhost:8082      | -             |
-| Kafka Result API     | http://localhost:8083      | -             |
-| Kafka Broker         | http://localhost:9092      | -             |
+| Service              | URL                    | Credentials   |
+| -------------------- | ---------------------- | ------------- |
+| Airflow UI           | http://localhost:8081  | admin / admin |
+| Spark Master UI      | http://localhost:8080  | -             |
+| Spark History Server | http://localhost:18080 | -             |
+| Kafka Producer API   | http://localhost:8082  | -             |
+| Kafka Result API     | http://localhost:8083  | -             |
+| Kafka Broker         | http://localhost:9092  | -             |
 
 ### 3. Run the ML Pipeline
 
